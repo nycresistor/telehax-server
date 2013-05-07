@@ -1,0 +1,102 @@
+#!/usr/bin/perl
+
+package TelehaxServer;
+
+use strict;
+use base 'Net::Server::Multiplex';
+
+sub mux_connection {
+  my $self = shift;
+  my $mux  = shift;
+  my $fh   = shift;
+  my $peer = $self->{peeraddr};
+  
+  $self->{id} = $self->{net_server}->{server}->{requests};
+  $self->{peerport} = $self->{net_server}->{server}->{peerport};
+  $self->{logtext} = '';
+
+  printlog("[$peer:$self->{id}] CONNECT 300");
+}
+
+sub mux_close {
+  my $self = shift;
+  my $mux  = shift;
+  my $fh   = shift;
+  my $peer = $self->{peeraddr};
+  if (exists $self->{id}) {
+    printlog("[$peer:$self->{id}] NO CARRIER");
+  }
+}
+
+sub mux_input {
+	my $self = shift;
+	my $mux = shift;
+	my $fh = shift;
+	my $in_ref = shift;
+
+	my $peer = $self->{peeraddr};
+	my $id = $self->{id};
+
+	if ($$in_ref =~ s/\x{06}//g) {
+		$self->ping($mux,$id);
+	}
+
+	$self->{logtext} .= $$in_ref;
+	$self->broadcast($mux,$$in_ref,$id);
+	$$in_ref = "";
+
+	while ($self->{logtext} =~ s/^(.*?)[\r\n]{1,2}//) {
+		printlog("[$peer:$id] $1") if $1;
+	}
+
+	if (length($self->{logtext}) > 80) {
+		printlog("[$peer:$id] $self->{logtext}");
+		$self->{logtext} = '';
+	}
+}
+
+sub broadcast {
+	my $self = shift;
+	my $mux = shift;
+	my $msg = shift;
+	my $id = shift;
+
+	foreach my $fh ($mux->handles) {
+		if ($id ne $mux->{_fhs}->{$fh}->{object}->{id}) {
+			print $fh $msg;
+		}
+	}
+}
+
+sub ping {
+	my $self = shift;
+	my $mux = shift;
+	my $id = shift;
+
+	foreach my $fh ($mux->handles) {
+		if ($id eq $mux->{_fhs}->{$fh}->{object}->{id}) {
+			print $fh chr(6);
+		}
+	}
+}
+
+sub printlog {
+	print STDERR "[" , scalar(localtime(time)) , "] " , @_ , "\n";
+}
+
+sub first_exists {
+	foreach my $path(@_) {
+		if (-e $path) {
+			return $path;
+		}
+	}
+	return undef;	
+}
+
+TelehaxServer->run({ conf_file => first_exists(qw#
+	/etc/telehax.conf
+	/etc/telehax/telehax.conf
+	~/.telehax
+	telehax.conf#)
+});
+
